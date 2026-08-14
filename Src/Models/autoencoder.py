@@ -13,7 +13,7 @@ class ConvAutoencoder(nn.Module):
         self.decoder = nn.Sequential(
             nn.ConvTranspose1d(64,32,kernel_size=5,stride=2,padding=2),nn.ReLU(),
             nn.ConvTranspose1d(32,16,kernel_size=5,stride=2,padding=2),nn.ReLU(),
-            nn.ConvTranspose1d(16,1,kernel_size=7,stride=2,padding=2),nn.ReLU(),
+            nn.ConvTranspose1d(16,1,kernel_size=7,stride=2,padding=2)
         )
         self.window_len = window_len
     def forward(self, x):
@@ -24,3 +24,15 @@ class ConvAutoencoder(nn.Module):
         return out
 
     def reconstruction_error(self, x, k:int = 5):
+        with torch.no_grad():
+            recon = self(x)
+            err= (recon-x)**2
+            greatest_errs, index = torch.topk(err, k=k, dim=-1)
+
+            #I am picking the greatest err values because lighcurves are quiet for the most part
+
+            return greatest_errs.mean(dim=-1)
+
+
+
+
