@@ -27,11 +27,13 @@ class ConvAutoencoder(nn.Module):
         with torch.no_grad():
             recon = self(x)
             err= (recon-x)**2
+            err = err.squeeze(1)
             greatest_errs, index = torch.topk(err, k=k, dim=-1)
 
             #I am picking the greatest err values because lighcurves are quiet for the most part
 
             return greatest_errs.mean(dim=-1)
+
 
 
 
