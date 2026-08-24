@@ -11,7 +11,24 @@ FLARE_RATE = 0.25
 ARTIFACT_RATE = 0.20
 VARIABILITY_RATE = 0.15
 CADENCE_MINUTE = 29.4
+MAX_CENTERS_PER_STAR = 20
 
+rng = np.random.default_rng(42)
+
+def eb_epoch_is_reliable(detrended, time, period, time0, min_depth_threshold=0.01, max_std=0.05):
+    centers = find_centers(time, period, time0)
+    centers = [c for c in centers if time.min() <= c <= time.max()]
+    if len(centers) < 3:
+        return False
+
+    depths = []
+    for c in centers:
+        idx = int(np.argmin(np.abs(time - c)))
+        depths.append(detrended[idx])
+    depths = np.array(depths)
+
+    median_depth = 1.0 - np.median(depths)
+    return median_depth > min_depth_threshold and depths.std() < max_std
 
 def detrend(flux):
     if np.isnan(flux).mean() > 0.2:
@@ -24,7 +41,10 @@ def detrend(flux):
 
 def find_centers(time_array, period, time0):
     end_time = time_array.max()
+
+
     num_orbits = int((end_time - time0) // period)
+
     return [time0 + (k * period) for k in range(0, num_orbits + 1)]
 
 
@@ -51,12 +71,17 @@ def cadence_transit(kepid, koi_df):
     chunks = []
     is_transit = np.zeros(len(time), dtype=bool)
 
-    # FIX: Corrected iterrows unpacking
+
     for _, row in target_row.iterrows():
         period = float(row["koi_period"])
         time0 = float(row["koi_time0bk"])
 
         centers = find_centers(time, period, time0)
+        centers = [c for c in centers if time.min() <= c <= time.max()]
+
+
+        if len(centers) > MAX_CENTERS_PER_STAR:
+            centers = list(rng.choice(centers, size=MAX_CENTERS_PER_STAR, replace=False))
 
         for c in centers:
             if c < time.min() or c > time.max():
@@ -65,12 +90,14 @@ def cadence_transit(kepid, koi_df):
             start_slice = idx - half
             end_slice = idx + half + 1
             if start_slice >= 0 and end_slice <= len(detrended_flux):
-                # FIX: Added kepid tracking
+
                 chunks.append({
                     "kepid": kepid,
                     "flux": detrended_flux[start_slice:end_slice],
                     "label": "transit"
                 })
+
+
                 is_transit[start_slice:end_slice] = True
 
     for k in range(0, len(detrended_flux) - window_size + 1, stride):
@@ -89,14 +116,8 @@ def find_eb_dip(detrended_flux, time):
     return time[deepest_idx]
 
 
-def cadence_ebs(kepid, eb_df):
+def cadence_ebs(kepid, eb_df, rng=rng):
     file_path = f"Data/raw/KIC{kepid}.csv"
-    target_row = eb_df[eb_df["kepid"] == int(kepid)]
-    if len(target_row) == 0:
-        return []
-
-    period = float(target_row.iloc[0]["period"])
-
     try:
         df = pd.read_csv(file_path)
     except FileNotFoundError:
@@ -105,46 +126,46 @@ def cadence_ebs(kepid, eb_df):
     flux = df["flux"].to_numpy(dtype=float)
     time = df["time"].to_numpy(dtype=float)
     detrended_flux = detrend(flux)
-
     if detrended_flux is None:
         return []
 
+    row = eb_df[eb_df["kepid"] == int(kepid)]
+    if len(row) == 0:
+        return []
+
+    period = float(row.iloc[0]["period"])
+    time0 = float(row.iloc[0]["time0"])
+
+    if not eb_epoch_is_reliable(detrended_flux, time, period, time0):
+        return []
+
+    all_centers = find_centers(time, period, time0)
+    all_centers = [c for c in all_centers if time.min() <= c <= time.max()]
+
     window_size = 201
-    stride = 50
     half = window_size // 2
-
-    time0 = find_eb_dip(detrended_flux, time)
-    centers = find_centers(time, period, time0)
-    chunks = []
     is_transit = np.zeros(len(time), dtype=bool)
-
-    for c in centers:
-        if c < time.min() or c > time.max():
-            continue
-
+    for c in all_centers:
         idx = int(np.argmin(np.abs(time - c)))
-        start_slice = idx - half
-        end_slice = idx + half + 1
+        is_transit[max(0, idx - half): idx + half + 1] = True
 
+    labeled_centers = all_centers
+    if len(labeled_centers) > MAX_CENTERS_PER_STAR:
+        labeled_centers = list(rng.choice(labeled_centers, size=MAX_CENTERS_PER_STAR, replace=False))
+
+    chunks = []
+    for c in labeled_centers:
+        idx = int(np.argmin(np.abs(time - c)))
+        start_slice, end_slice = idx - half, idx + half + 1
         if start_slice >= 0 and end_slice <= len(detrended_flux):
-            chunks.append({
-                "kepid": kepid,
-                "flux": detrended_flux[start_slice:end_slice],
-                "label": "ebs"
-            })
-            is_transit[start_slice:end_slice] = True
+            chunks.append({"flux": detrended_flux[start_slice:end_slice], "label": "ebs", "kepid": kepid})
 
+    stride = 50
     for k in range(0, len(detrended_flux) - window_size + 1, stride):
-        window_mask = is_transit[k: k + window_size]
-        if not np.any(window_mask):
-            chunks.append({
-                "kepid": kepid,
-                "flux": detrended_flux[k: k + window_size],
-                "label": "quiet"
-            })
+        if not np.any(is_transit[k: k + window_size]):
+            chunks.append({"flux": detrended_flux[k: k + window_size], "label": "quiet", "kepid": kepid})
+
     return chunks
-
-
 def cadence_stellar(kepid):
     file_path = f"Data/raw/KIC{kepid}.csv"
     try:
@@ -173,12 +194,12 @@ def cadence_stellar(kepid):
 
 def stitch():
     print("Loading catalogs...")
-    manifest = pd.read_csv("Data/raw/_target_manifest.csv")
+    manifest = pd.read_csv("Data/raw/_target.csv")
     koi_df = pd.read_csv("Data/cumulative_koi_data.csv")
     eb_df = pd.read_csv("Data/eb_data.csv")
 
     transits = manifest[manifest["source"] == "transit"]
-    ebs = manifest[manifest["source"] == "eclipsing_binary"]
+    ebs = manifest[manifest["source"] == "ebs"]
     quiets = manifest[manifest["source"] == "quiet"]
 
     all_data = []
@@ -196,21 +217,17 @@ def stitch():
         all_data.extend(cadence_stellar(kepid))
 
     print("Executing Data Augmentation (Injection)...")
-    final_dataset = pd.DataFrame(all_data)
 
-    # 1. Isolate the quiet windows
+    final_dataset = pd.DataFrame(all_data)
     quiet_windows = final_dataset[final_dataset["label"] == "quiet"].copy()
 
-    # 2. Keep the real transits and EBs safely to the side
     final_dataset = final_dataset[final_dataset["label"] != "quiet"].copy()
 
-    # 3. Calculate exact integer numbers for our fractions based on the ORIGINAL total
     total_quiet = len(quiet_windows)
     n_flares = int(total_quiet * FLARE_RATE)
     n_artifacts = int(total_quiet * ARTIFACT_RATE)
     n_variability = int(total_quiet * VARIABILITY_RATE)
 
-    # 4. Sample and drop safely
     flares = quiet_windows.sample(n=n_flares, random_state=42)
     quiet_windows = quiet_windows.drop(flares.index)
 
@@ -220,20 +237,17 @@ def stitch():
     variability = quiet_windows.sample(n=n_variability, random_state=42)
     quiet_windows = quiet_windows.drop(variability.index)
 
-    # 5. Extract the FLUX arrays (stacked as a 2D NumPy array) to pass to inject()
     flares_flux = np.stack(flares["flux"].values)
     artifacts_flux = np.stack(artifacts["flux"].values)
     variability_flux = np.stack(variability["flux"].values)
 
-    rng = np.random.default_rng(42)
 
-    # 6. Inject the anomalies!
+
 
     sy_flares, meta_flare = inject(flares_flux, "flare", CADENCE_MINUTE, rng)
     sy_variability, meta_variability = inject(variability_flux, "variability", CADENCE_MINUTE, rng)
     sy_artifacts, meta_artifacts = inject(artifacts_flux, "artifact", CADENCE_MINUTE, rng)
 
-    # 7. Convert the newly injected NumPy arrays back into Pandas DataFrames with correct labels
     flares_df = pd.DataFrame({
         "kepid": flares["kepid"].values,
         "flux": list(sy_flares),
@@ -300,10 +314,15 @@ def stitch():
     print(f"\nDataset complete! Total chunks extracted: {len(final_dataset)}")
     print(final_dataset["label"].value_counts())
 
+    print(final_dataset[final_dataset.label == "transit"]["kepid"].value_counts().head(10))
+    print(final_dataset[final_dataset.label == "ebs"]["kepid"].value_counts().head(10))
 
+    print(final_dataset["label"].value_counts())
+    print(final_dataset[final_dataset.label == "transit"]["kepid"].value_counts().head(10))
+    print(final_dataset[final_dataset.label == "ebs"]["kepid"].value_counts().head(10))
 
-
-
+    transit_centers_per_star = final_dataset[final_dataset.label == "transit"]["kepid"].value_counts()
+    print(f"stars at cap (20): {(transit_centers_per_star == 20).sum()} / {len(transit_centers_per_star)}")
 
 
 
