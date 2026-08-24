@@ -3,16 +3,15 @@ import numpy as np
 import pandas as pd
 import io
 from tqdm import tqdm
+import warnings
 
+warnings.filterwarnings('ignore')
 cap=200
 rows=[]
 def download_confirmed_planets():
-
     df=pd.read_csv('Data/cumulative_koi_data.csv')
-
     confirmed=df[df["koi_disposition"]=="CONFIRMED"][["kepid"]]
-
-    confirmed=confirmed.sample(200)
+    confirmed=confirmed.sample(400)
 
     for value in tqdm(confirmed["kepid"], desc="Downloading Planets"):
 
@@ -25,16 +24,16 @@ def download_confirmed_planets():
                         lcs=lcs.stitch().remove_nans()
                         lcdf=lcs.to_pandas().reset_index()[["time","flux","flux_err"]]
                         lcdf.to_csv(f'Data/raw/KIC{value}.csv', index=False)
-                        rows.append({"kepid": kepid_str, "source": 'transit'})
+                        rows.append({"kepid": value, "source": 'transit'})
                     else:
-                        print(f"No data found for {value}")
+                        tqdm.write(f"No data found for KIC {value}")
             except:
-                print(f"No data found for {value}")
+               tqdm.write(f"No data found for {value}")
 
 
 def download_ebs():
     df=pd.read_csv('Data/eb_data.csv')
-    ebs_data=df["kepid"].sample(200)
+    ebs_data=df["kepid"].sample(400)
     for value in tqdm(ebs_data, desc="Downloading EBs"):
 
             lc= lk.search_lightcurve(f'KIC {value}', mission="Kepler", cadence="long")
@@ -44,11 +43,11 @@ def download_ebs():
                     lcs=lcs.stitch().remove_nans()
                     lcdf=lcs.to_pandas().reset_index()[["time","flux","flux_err"]]
                     lcdf.to_csv(f'Data/raw/KIC{value}.csv', index=False)
-                    rows.append({"kepid": kepid_str, "source": 'ebs'})
+                    rows.append({"kepid": value, "source": 'ebs'})
                 else:
-                    print(f"No data found for {value}")
+                    tqdm.write(f"No data found for {value}")
             except:
-                print(f"No data found for {value}")
+                tqdm.write(f"No data found for {value}")
 
 
 def download_stellar():
@@ -59,7 +58,6 @@ def download_stellar():
     quiet_stellar=quiet_stellar[~quiet_stellar["kepid"].isin(df3["kepid"])]
     quiet_stellar=quiet_stellar.sample(200)
     for value in tqdm(quiet_stellar["kepid"], desc="Downloading Quiet Stars"):
-
             lc=lk.search_lightcurve(f"KIC {value}", mission="Kepler", cadence="long")
             try:
                 if len(lc)>0:
@@ -67,9 +65,10 @@ def download_stellar():
                     lcs=lcs.stitch().remove_nans()
                     lcdf=lcs.to_pandas().reset_index()[["time","flux","flux_err"]]
                     lcdf.to_csv(f'Data/raw/KIC{value}.csv', index=False)
-                    rows.append({"kepid": kepid_str, "source": 'quiet'})
+                    rows.append({"kepid": value, "source": 'quiet'})
             except:
-                print(f"No data found for {value}")
+                tqdm(f"No data found for {value}")
+
 
 if __name__=="__main__":
     download_confirmed_planets()
