@@ -34,22 +34,21 @@ def artifact_injection(flux: np.ndarray, rng: np.random.Generator):
     idx = rng.integers(int(0.1 * n), int(n * 0.9))
 
     if kind == "cosmic_ray":
-        # Fixed: Multiplication instead of addition
+
         output[idx] += rng.uniform(0.03, 0.15) * rng.choice([-1, 1])
         meta = {"type": "artifact", "subtype": "cosmic_ray", "idx": int(idx)}
 
     elif kind == "spsd":
         drop = rng.uniform(0.01, 0.06)
         recovery_l = rng.integers(10, 40)
-        # Fixed: Calculate end properly relative to idx
+
         end = min(n, idx + recovery_l)
         recovery = np.linspace(drop, 0, end - idx)
-        # Fixed: Slice the output array
+
         output[idx:end] -= recovery
         meta = {"type": "artifact", "subtype": "spsd", "idx": int(idx), "recovery_len": int(recovery_l)}
 
     else:
-        # Fixed: Multiplication instead of addition for the shift direction
         shift = rng.uniform(0.01, 0.05) * rng.choice([-1, 1])
         output[idx:] -= shift
         meta = {"type": "artifact", "subtype": "jump", "idx": int(idx), "shift": float(shift)}
@@ -59,7 +58,6 @@ def artifact_injection(flux: np.ndarray, rng: np.random.Generator):
 
 def variability_injection(flux, cadence_minute: float, rng: np.random.Generator):
     n = len(flux)
-    # Convert minutes to hours for the period calculation
     t = np.arange(n) * (cadence_minute / 60.0)
 
     period = rng.uniform(12, 96)
@@ -74,9 +72,7 @@ def variability_injection(flux, cadence_minute: float, rng: np.random.Generator)
 
 
 def inject(flux_2d: np.ndarray, kind: str, cadence_min: float, rng: np.random.Generator):
-    """
-    Batch wrapper: Takes a 2D array of windows, loops through them, and applies the injection.
-    """
+
     injected_fluxes = []
     metadata_list = []
 
