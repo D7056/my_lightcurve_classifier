@@ -32,12 +32,9 @@ def fetch_eb():
     last_err=None
     for attempt in range(1,4):
         try:
-
             response=requests.get(EB_URL, timeout=180, verify=certifi.where())
             response.raise_for_status()
-
             tables=pd.read_html(io.StringIO(response.text))
-
             break
         except Exception as e:
             last_err=e
@@ -52,18 +49,21 @@ def fetch_eb():
               "synthetic eclipsing_binary injection if this file is missing.)")
         return pd.DataFrame()
 
-    candidates=[t for t in tables if "Kepler ID" in t.columns and "Period" in t.columns and len(t)>1000]
+    candidates=[t for t in tables if "Kepler ID" in t.columns and "BJD0" in t.columns and "Period" in t.columns and len(t)>1000]
     if not candidates:
         print(f"  ! Found {len(tables)} table(s) on the page but none matched the "
               f"expected EB catalog shape -- the page structure may have changed.")
         return pd.DataFrame()
 
-    df=candidates[0].rename(columns={"Kepler ID":"kepid","Period":"period"})
+    df=candidates[0].rename(columns={"Kepler ID":"kepid","Period":"period", "BJD0":"bjd0"})
+
     df["kepid"]=pd.to_numeric(df["kepid"], errors="coerce")
-    df["period"]=pd.to_numeric(df["period"], errors="coerce")
-    df=df.dropna(subset=["kepid","period"])
+    df["bjdo"]=pd.to_numeric(df["bjd0"], errors="coerce")
+    df["period"] = pd.to_numeric(df["period"], errors="coerce")
+
+    df=df.dropna(subset=["kepid","period", "bjdo"])
     df["kepid"] = df["kepid"].astype(int)
-    final_df=df[["kepid","period"]].drop_duplicates()
+    final_df=df[["kepid","period","bjdo"]].drop_duplicates()
 
 
 
@@ -81,6 +81,7 @@ def fetch_stellar():
         response.raise_for_status()
     except:
         print("The loading failed")
+
     df=pd.read_csv(io.StringIO(response.text))
     df=df.dropna()
     df=df.drop_duplicates()
@@ -89,5 +90,13 @@ def fetch_stellar():
 
 
 
-stellar_data=fetch_stellar()
-stellar_data.to_csv("Data/stellar_data.csv", index=False)
+koi=fetch_data()
+ebs=fetch_eb()
+quiet=fetch_stellar()
+
+koi.to_csv("cumulative_koi_data.csv")
+ebs.to_csv("eb_data.csv")
+quiet.to_csv("stellar_data.csv")
+
+
+
